@@ -1,3 +1,6 @@
 streamlit
-httpx
+supabase
 pandas
+plotly
+pillow
+httpx
