@@ -4,11 +4,9 @@ from supabase import create_client, Client
 from datetime import datetime, date
 import random
 import os
-import requests
 from PIL import Image
 
-# --- [0. 数据库修复 SQL 指令 - 请在 Supabase SQL Editor 执行] ---
-# -- 确保包含所有字段，特别是新增的 note 字段
+# --- [0. 数据库建表参考 - 请确保 Supabase 已执行以下 SQL] ---
 # CREATE TABLE IF NOT EXISTS users (
 #   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
 #   name TEXT UNIQUE,
@@ -63,38 +61,38 @@ def init_supabase():
 
 supabase = init_supabase()
 
-# --- 3. 核心修复：数值安全转换函数 (防止 TypeError/APIError) ---
-def safe_float(value, default=0.0):
-    """所有从 AI 或 Input 获取的数据必须经过此函数转换才能写数据库"""
+# --- 3. 核心修复：数值安全转换函数 (防止写入失败) ---
+def safe_float(v):
+    """强制要求：禁止直接使用 float()，防止 None 或非法字符导致程序崩溃"""
     try:
-        if value is None or value == "" or value == "None":
-            return float(default)
-        return float(value)
+        if v is None or str(v).strip() == "" or str(v) == "None":
+            return 0.0
+        return float(v)
     except:
-        return float(default)
+        return 0.0
 
-# --- 4. 饮食 AI 分析函数 (带兜底 Fallback) ---
+# --- 4. 饮食 AI 分析函数 (结构固定 + 缩放缩略图) ---
 def analyze_food(image):
-    """上传即分析，绝不中断程序"""
+    """即使接入 DeepSeek，也必须保证返回结构固定为 float 类型"""
     try:
         # 此处模拟调用 DeepSeek Vision API 逻辑
         return {
-            "calories": random.randint(300, 700),
+            "calories": float(random.randint(300, 800)),
+            "protein": float(random.randint(10, 30)),
+            "fat": float(random.randint(5, 20)),
+            "carbs": float(random.randint(30, 80)),
+            "fiber": float(random.randint(3, 10))
+        }
+    except:
+        return {
+            "calories": 500.0,
             "protein": 20.0,
             "fat": 10.0,
             "carbs": 50.0,
             "fiber": 5.0
         }
-    except:
-        return {
-            "calories": 500.0,
-            "protein": 15.0,
-            "fat": 10.0,
-            "carbs": 40.0,
-            "fiber": 4.0
-        }
 
-# --- 5. UI 样式注入 (蒂芙尼蓝 + 深色文字) ---
+# --- 5. UI 样式注入 (深色字体、强制左右并排) ---
 st.markdown(f"""
     <style>
     .stApp {{ background-color: #F0F9F9; color: #1A1A1A; }}
@@ -118,7 +116,7 @@ if 'user_role' not in st.session_state:
     st.image("app_icon.png", width=120)
     st.markdown('<div class="card"><h3>👤 请确认身份进入基地</h3>', unsafe_allow_html=True)
     role = st.radio("选择身份", ["花大爷", "不差儿"], horizontal=True)
-    if st.button("进入系统", use_container_width=True):
+    if st.button("确认进入", use_container_width=True):
         st.session_state.user_role = role
         st.rerun()
     st.stop()
@@ -126,6 +124,7 @@ if 'user_role' not in st.session_state:
 my_name = st.session_state.user_role
 other_name = "不差儿" if my_name == "花大爷" else "花大爷"
 
+# 数据库实时判定初始化状态
 try:
     res_me = supabase.table("users").select("*").eq("name", my_name).execute()
     initialized = True if res_me.data and len(res_me.data) > 0 else False
@@ -146,19 +145,19 @@ if not initialized:
                 u_age = today_date.year - birth.year - ((today_date.month, today_date.day) < (birth.month, birth.day))
                 supabase.table("users").upsert({
                     "name": my_name, "birthday": str(birth), "age": int(u_age),
-                    "height": int(u_height), "weight": float(u_weight), "gender": u_gender
+                    "height": int(u_height), "weight": safe_float(u_weight), "gender": u_gender
                 }, on_conflict="name").execute()
                 st.rerun()
             except Exception as e: st.error(f"初始化保存失败: {e}")
     st.stop()
 
-# --- 7. 数据加载 ---
+# --- 7. 数据刷新读取 ---
 try:
-    me_base = supabase.table("users").select("*").eq("name", my_name).execute().data[0]
+    me_data = supabase.table("users").select("*").eq("name", my_name).execute().data[0]
     friend_res = supabase.table("users").select("*").eq("name", other_name).execute()
-    other_base = friend_res.data[0] if friend_res.data else None
+    friend_data = friend_res.data[0] if friend_res.data else None
 except Exception as e:
-    st.error(f"数据同步异常: {e}")
+    st.error(f"数据加载异常: {e}")
     st.stop()
 
 # 顶部标题栏
@@ -166,11 +165,15 @@ st.image("app_icon.png", width=100)
 c_h1, c_h2 = st.columns([3, 1])
 with c_h1:
     view_date = st.date_input("📅 日期选择", date.today())
-    st.write(f"今日打卡状态：进行中 | 天气：晴 22°C")
+    st.write(f"今日日期: {view_date} | 天气: 🌦️ 晴转多云 22°C")
 with c_h2:
-    st.write(f"打卡连胜: 🔥 7天")
+    try:
+        streak_res = supabase.table("daily_logs").select("log_date").order("log_date", desc=False).execute()
+        streak = len({item['log_date'] for item in streak_res.data}) if streak_res.data else 1
+    except: streak = 1
+    st.write(f"打卡连胜: 🔥 {streak}天")
 
-# --- 8. 统一渲染函数 (左右完全对齐) ---
+# --- 8. 统一渲染函数 (左右界面必须完全一致) ---
 def render_column(name, col, editable, base_info):
     try:
         l_res = supabase.table("daily_logs").select("*").eq("user_name", name).eq("log_date", str(view_date)).execute()
@@ -183,20 +186,23 @@ def render_column(name, col, editable, base_info):
             st.info(f"等待 {name} 初始化...")
             return
 
-        # 获取并安全转换数值
-        h = safe_float(base_info.get('height'), 165.0)
-        w = safe_float(log.get('weight'), base_info.get('weight', 60.0))
-        age = safe_float(base_info.get('age'), 24.0)
+        # 获取安全数值
+        h = safe_float(base_info.get('height', 165.0))
+        w = safe_float(log.get('weight', base_info.get('weight', 60.0)))
+        age = safe_float(base_info.get('age', 24.0))
 
-        # 1. 身体指标
+        # (1) 身体指标
         st.markdown('<div class="card"><b>📊 身体指标</b>', unsafe_allow_html=True)
         st.write(f"📏 身高: **{int(h)}** cm (只读)")
         new_w = st.number_input("体重 (kg)", value=w, key=f"w_in_{name}", disabled=not editable)
         bmi = round(new_w / ((h/100)**2), 1) if h > 0 else 0
         st.write(f"⚖️ BMI: **{bmi}**")
 
+        # 缩略图显示 (图片必须显示)
         fat_img = st.file_uploader("📷 上传露腹照分析体脂", type=['jpg','png'], key=f"f_up_{name}", disabled=not editable, label_visibility="collapsed")
-        fat_val = safe_float(log.get('body_fat'), 0.0)
+        if fat_img: st.image(fat_img, width=120)
+        
+        fat_val = safe_float(log.get('body_fat', 0.0))
         if st.button("🔍 AI 分析体脂率", key=f"f_btn_{name}", disabled=not editable, use_container_width=True):
             if not fat_img: st.warning("请上传照片")
             else:
@@ -207,93 +213,99 @@ def render_column(name, col, editable, base_info):
                 except: pass
         st.write(f"🔥 体脂率: **{fat_val}%**")
 
-        # 围度字段
+        # 围度
         g1, g2 = st.columns(2)
         chest = g1.number_input("胸围", value=safe_float(log.get('chest')), key=f"ch_{name}", disabled=not editable)
         waist = g2.number_input("腰围", value=safe_float(log.get('waist')), key=f"wa_{name}", disabled=not editable)
         arm = g1.number_input("臂围", value=safe_float(log.get('arm')), key=f"ar_{name}", disabled=not editable)
         hip = g2.number_input("臀围", value=safe_float(log.get('hip')), key=f"hi_{name}", disabled=not editable)
 
-        if st.button("💾 保存身体数据", key=f"sv_b_{name}", disabled=not editable, use_container_width=True):
+        if st.button("💾 保存今日身体数据", key=f"sv_b_{name}", disabled=not editable, use_container_width=True):
             try:
                 supabase.table("daily_logs").upsert({
                     "user_name": name, "log_date": str(view_date), "weight": safe_float(new_w),
                     "chest": safe_float(chest), "waist": safe_float(waist), "arm": safe_float(arm), "hip": safe_float(hip)
                 }, on_conflict="user_name,log_date").execute()
-                st.rerun()
-            except Exception as e: st.error(f"保存报错: {e}")
+                st.success("数据同步成功")
+            except Exception as e: st.error(f"保存失败: {e}")
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # 2. 饮食打卡 (核心修复：AI结果安全写入)
+        # (2) 饮食打卡 (核心逻辑修复)
         st.markdown('<div class="card"><b>🍱 饮食记录</b>', unsafe_allow_html=True)
         bmr = 10 * w + 6.25 * h - 5 * age - 161
         suggested = int(bmr * 1.2)
-        consumed = safe_float(log.get('calorie_intake'), 0.0)
+        consumed = safe_float(log.get('calorie_intake', 0.0))
         st.write(f"🎯 建议摄入: **{suggested}** kcal")
-        st.metric("已摄入卡路里", f"{int(consumed)} kcal")
+        st.metric("今日已摄入", f"{int(consumed)} kcal")
         
-        water = st.number_input("💧 饮水 (ml)", value=int(safe_float(log.get('water'))), key=f"wt_{name}", disabled=not editable)
-        food_img = st.file_uploader("🍔 上传餐点图片分析", type=['jpg','png'], key=f"fd_{name}", disabled=not editable, label_visibility="collapsed")
+        food_img = st.file_uploader("🍔 上传饮食图片分析", type=['jpg','png'], key=f"fd_{name}", disabled=not editable, label_visibility="collapsed")
+        if food_img: st.image(food_img, width=120)
         
-        if food_img is not None and editable:
-            if st.button("🚀 启动 AI 饮食分析", key=f"fd_btn_{name}", use_container_width=True):
+        if st.button("🚀 AI 饮食分析", key=f"fd_btn_{name}", disabled=not editable, use_container_width=True):
+            if not food_img: st.warning("请上传餐食图片")
+            else:
                 result = analyze_food(food_img)
-                new_calories = consumed + safe_float(result["calories"])
+                c_val = safe_float(result.get("calories", 0))
                 try:
                     supabase.table("daily_logs").upsert({
                         "user_name": name, "log_date": str(view_date), 
-                        "calorie_intake": new_calories, "water": safe_float(water)
+                        "calorie_intake": consumed + c_val
                     }, on_conflict="user_name,log_date").execute()
+                    st.success(f"已增加 {c_val} kcal")
                     st.rerun()
-                except: st.error("写入失败")
-        else:
-            # 即使不可编辑，也显示一个禁用的按钮占位，保持对齐
-            st.button("AI 识别中...", key=f"fd_btn_dis_{name}", disabled=True, use_container_width=True)
+                except Exception as e: st.error(f"写入数据库失败: {e}")
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # 3. 健康心得模块 (新增)
-        st.markdown('<div class="card"><b>📝 健康心得</b>', unsafe_allow_html=True)
-        note_img = st.file_uploader("心得配图", type=['jpg','png'], key=f"ni_{name}", disabled=not editable, label_visibility="collapsed")
-        note_val = st.text_area("记录今天的心情、进步或 emoji...", value=log.get('note', ''), key=f"nt_{name}", disabled=not editable, placeholder="今天有什么收获？写下来鼓励自己吧！")
-        
-        if st.button("📮 发布心得", key=f"nt_btn_{name}", disabled=not editable, use_container_width=True):
-            try:
-                supabase.table("daily_logs").upsert({
-                    "user_name": name, "log_date": str(view_date), "note": str(note_val)
-                }, on_conflict="user_name,log_date").execute()
-                st.success("心得已同步")
-                st.rerun()
-            except: st.error("心得保存失败")
-        
-        if not editable and not log.get('note'):
-            st.write("对方还没分享心得哦...")
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        # 4. 健身打卡
+        # (3) 健身打卡 (输入即计算逻辑)
         st.markdown('<div class="card"><b>🏋️ 健身打卡</b>', unsafe_allow_html=True)
-        burn = safe_float(log.get('calorie_burn'))
-        ex_img = st.file_uploader("健身自拍", type=['jpg','png'], key=f"ex_{name}", disabled=not editable, label_visibility="collapsed")
-        ex_t = st.text_input("项目", value=str(log.get('ex_type', '')), key=f"ext_{name}", disabled=not editable, placeholder="运动类型")
-        ex_d = st.number_input("时长 (min)", value=int(safe_float(log.get('ex_duration'))), key=f"exd_{name}", disabled=not editable)
+        ex_img = st.file_uploader("运动打卡图", type=['jpg','png'], key=f"ex_up_{name}", disabled=not editable, label_visibility="collapsed")
+        if ex_img: st.image(ex_img, width=120)
         
-        if st.button("⚡ 同步运动消耗", key=f"ex_btn_{name}", disabled=not editable, use_container_width=True):
-            burnt_val = ex_d * random.uniform(5.0, 10.0)
+        ex_t = st.text_input("运动项目", value=str(log.get('ex_type', '')), key=f"ext_{name}", disabled=not editable, placeholder="例如：跑步")
+        ex_d = st.number_input("时长 (分钟)", value=int(safe_float(log.get('ex_duration'))), key=f"exd_{name}", disabled=not editable)
+        
+        # 即使不点击按钮，也显示实时预估消耗
+        current_burn = safe_float(log.get('calorie_burn'))
+        if ex_d > 0:
+            est_burn = round(ex_d * 7.5, 2) # 中位随机值模拟实时显示
+            st.metric("预估本次消耗", f"{est_burn} kcal")
+        
+        if st.button("⚡ 同步运动热量", key=f"ex_btn_{name}", disabled=not editable, use_container_width=True):
+            burnt_val = safe_float(ex_d * random.uniform(5.0, 10.0))
             try:
                 supabase.table("daily_logs").upsert({
                     "user_name": name, "log_date": str(view_date),
-                    "ex_type": ex_t, "ex_duration": ex_d, "calorie_burn": safe_float(burnt_val)
+                    "ex_type": ex_t, "ex_duration": ex_d, "calorie_burn": burnt_val
                 }, on_conflict="user_name,log_date").execute()
                 st.rerun()
-            except: pass
+            except: st.error("保存运动失败")
         
-        st.write(f"⚡ 运动消耗: **{int(burn)}** kcal")
-        st.write(f"🌟 总计热量平衡: **{int(bmr + burn - consumed)}** kcal")
+        st.write(f"⚡ 今日累计消耗: **{int(current_burn)}** kcal")
         st.markdown('</div>', unsafe_allow_html=True)
 
-# 渲染 (左不差儿，右花大爷)
+# 渲染对垒分栏 (左右严格对齐)
 col_l, col_r = st.columns(2)
-render_column("不差儿", col_l, (my_name == "不差儿"), other_base)
-render_column("花大爷", col_r, (my_name == "花大爷"), me_base)
+render_column("不差儿", col_l, editable=(my_name == "不差儿"), base_info=friend_data)
+render_column("花大爷", col_r, editable=(my_name == "花大爷"), base_info=me_data)
+
+# --- 9. 健康心得模块 (全宽布局) ---
+st.markdown("---")
+st.subheader("💭 健康心得")
+try:
+    # 加载自己的心情
+    my_log_res = supabase.table("daily_logs").select("note").eq("user_name", my_name).eq("log_date", str(view_date)).execute()
+    current_note = my_log_res.data[0]['note'] if my_log_res.data and my_log_res.data[0]['note'] else ""
+except: current_note = ""
+
+note_box = st.text_area("记录一下今天的感受...", value=current_note, placeholder="今天坚持得真棒！明天继续加油鸭~", height=100)
+if st.button("💾 保存心得", use_container_width=True):
+    try:
+        supabase.table("daily_logs").upsert({
+            "user_name": my_name, "log_date": str(view_date), "note": str(note_box)
+        }, on_conflict="user_name,log_date").execute()
+        st.success("心得已同步至数据库！")
+    except Exception as e:
+        st.error(f"心得保存失败: {e}")
 
 if st.sidebar.button("切换身份 / 登出"):
     st.session_state.clear()
