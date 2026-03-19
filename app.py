@@ -15,14 +15,14 @@ try:
         st.set_page_config(
             page_title="花大爷 × 不差儿",
             page_icon=icon_img,
-            layout="centered"  # 强制居中布局，适配移动端宽度
+            layout="centered" # 移动端适配：强制居中布局
         )
     else:
         st.set_page_config(page_title="花大爷 × 不差儿", layout="centered")
 except:
     st.set_page_config(page_title="花大爷 × 不差儿", layout="centered")
 
-# --- 2. 数据库配置与安全转换 ---
+# --- 2. 数据库配置与工具函数 ---
 SUPABASE_URL = "https://hjrvdusefkjtmucsreeq.supabase.co"
 SUPABASE_KEY = "sb_publishable_yDO1V8a3qYz8YPSzXSHdWA_mhpQG8QF"
 TIFFANY_BLUE = "#0ABAB5"
@@ -40,64 +40,55 @@ def safe_float(v, default=0.0):
         return float(v)
     except: return float(default)
 
-# --- 3. 核心 CSS：移动端纵向适配 + 禁用横向滚动 ---
+# --- 3. 移动端 UI 强化 CSS (禁止横向滚动) ---
 st.markdown(f"""
     <style>
-    /* 强制禁用横向滚动条，解决左右滑动问题 */
+    /* 强制禁止横向溢出 */
     html, body, [data-testid="stAppViewContainer"] {{
         overflow-x: hidden !important;
-        width: 100vw !important;
+        width: 100% !important;
         margin: 0 !important;
         padding: 0 !important;
     }}
     
-    /* 锁定深色文字 */
-    .stMarkdown, p, span, label, div, .stMetricValue {{
+    /* 锁定深色文字与背景 */
+    .stApp {{ background-color: #F5FBFB; }}
+    html, body, .stMarkdown, p, span, label, div, .stMetricValue {{
         color: #1A1A1A !important;
         font-family: -apple-system, system-ui, sans-serif !important;
     }}
 
-    .stApp {{ background-color: #F0F9F9; }}
-    
-    /* 移动端卡片样式：纵向堆叠 */
-    .card {{
+    /* 移动端卡片样式 */
+    .mobile-card {{
         background-color: white; 
         padding: 15px; 
         border-radius: 12px;
         border-left: 5px solid {TIFFANY_BLUE}; 
         box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-        margin-bottom: 20px;
-        width: 100% !important;
+        margin-bottom: 15px;
     }}
     
-    /* 按钮宽度自适应 */
+    /* 控件自适应宽度 */
     .stButton>button {{
         background-color: {TIFFANY_BLUE}; 
         color: white !important;
         border-radius: 8px; 
         width: 100%; 
-        border: none; 
         font-weight: bold;
         height: 45px;
     }}
     
-    /* 隐藏多余边距 */
-    [data-testid="column"] {{
-        width: 100% !important;
-        flex: 1 1 100% !important;
-    }}
-    
-    hr {{ margin: 30px 0; border: 0; border-top: 2px dashed {TIFFANY_BLUE}; }}
+    h3 {{ color: #088F8A !important; margin-top: 10px; }}
     </style>
     """, unsafe_allow_html=True)
 
-# --- 4. 身份登录 ---
+# --- 4. 身份登录逻辑 ---
 if 'user_role' not in st.session_state:
     if os.path.exists(icon_path):
-        st.image(icon_path, width=100)
-    st.markdown('<div class="card"><h3>👤 确认身份进入基地</h3>', unsafe_allow_html=True)
-    role = st.radio("你是谁？", ["不差儿", "花大爷"], horizontal=True)
-    if st.button("进入系统", use_container_width=True):
+        st.image(icon_path, width=80)
+    st.markdown('<div class="mobile-card"><h3>👤 身份登录</h3>', unsafe_allow_html=True)
+    role = st.radio("请选择您的身份：", ["不差儿", "花大爷"], horizontal=True)
+    if st.button("进入基地"):
         st.session_state.user_role = role
         st.rerun()
     st.stop()
@@ -105,154 +96,132 @@ if 'user_role' not in st.session_state:
 my_name = st.session_state.user_role
 other_name = "花大爷" if my_name == "不差儿" else "不差儿"
 
-# --- 5. 顶栏信息与统计 ---
+# --- 5. 顶栏信息 ---
 if os.path.exists(icon_path):
     st.image(icon_path, width=80)
 
-view_date = st.date_input("📅 选择查看日期", date.today())
-
+# 统计打卡天数
 try:
-    # 统计打卡天数
-    logs_res = supabase.table("daily_logs").select("log_date").eq("user_name", my_name).execute()
-    streak = len({item['log_date'] for item in logs_res.data}) if logs_res.data else 1
-except: streak = 1
+    log_res = supabase.table("daily_logs").select("log_date").eq("user_name", my_name).execute()
+    streak = len({item['log_date'] for item in log_res.data}) if log_res.data else 0
+except: streak = 0
 
-st.markdown(f"### 🔥 累计打卡: {streak} 天")
-st.write(f"今日日期: {view_date} | 天气: 🌦️ 晴 22°C")
+st.title("花大爷 × 不差儿")
+st.write(f"📅 今日：{date.today()} | 🔥 已打卡：{streak}天")
 
-# --- 6. 统一渲染函数 (改为纵向堆叠布局) ---
-def render_user_section(name, editable, base_info):
+# --- 6. 核心渲染逻辑 (纵向适配版) ---
+def render_user_section(name, editable):
+    # 获取数据
     try:
-        l_res = supabase.table("daily_logs").select("*").eq("user_name", name).eq("log_date", str(view_date)).execute()
+        u_res = supabase.table("users").select("*").eq("name", name).execute()
+        base_info = u_res.data[0] if u_res.data else None
+        l_res = supabase.table("daily_logs").select("*").eq("user_name", name).eq("log_date", str(date.today())).execute()
         log = l_res.data[0] if l_res.data else {}
-    except: log = {}
+    except: base_info, log = None, {}
 
-    # 用户标题
-    st.markdown(f"## {'👩‍𝓠' if name=='不差儿' else '👨‍🦳'} {name} 的日报")
+    st.markdown(f"## {'👩‍𝓠' if name=='不差儿' else '👨‍🦳'} {name} 的面板")
+    
     if not base_info:
-        st.warning(f"等待 {name} 初始化基础资料...")
+        st.warning(f"等待 {name} 初始化...")
         return
 
-    # 获取基础数据
-    h = safe_float(base_info.get('height', 165.0))
-    w_base = safe_float(base_info.get('weight', 60.0))
-    age = safe_float(base_info.get('age', 24.0))
-
-    # (1) 身体指标与维度 (全部纵向排列)
+    # (1) 身体指标 - 纵向排列
     with st.container():
-        st.markdown('<div class="card"><b>📊 身体指标与维度</b>', unsafe_allow_html=True)
-        st.write(f"📏 身高: {int(h)} cm")
+        st.markdown('<div class="mobile-card">', unsafe_allow_html=True)
+        st.markdown("### 📊 身体指标")
         
-        weight = st.number_input(f"{name}-体重 (kg)", value=safe_float(log.get("weight", w_base)), key=f"w_{name}", disabled=not editable)
-        bmi = round(weight / ((h/100)**2), 1) if h > 0 else 0
-        st.write(f"⚖️ BMI: {bmi}")
+        h = safe_float(base_info.get('height', 165.0))
+        w_val = safe_float(log.get('weight', base_info.get('weight', 60.0)))
+        
+        weight = st.number_input(f"体重 (kg) - {name}", value=w_val, key=f"w_{name}", disabled=not editable)
+        chest = st.number_input(f"胸围 (cm) - {name}", value=safe_float(log.get('chest')), key=f"ch_{name}", disabled=not editable)
+        arm = st.number_input(f"臂围 (cm) - {name}", value=safe_float(log.get('arm')), key=f"ar_{name}", disabled=not editable)
+        waist = st.number_input(f"腰围 (cm) - {name}", value=safe_float(log.get('waist')), key=f"wa_{name}", disabled=not editable)
+        hip = st.number_input(f"臀围 (cm) - {name}", value=safe_float(log.get('hip')), key=f"hi_{name}", disabled=not editable)
+        thigh = st.number_input(f"大腿围 (cm) - {name}", value=safe_float(log.get('thigh')), key=f"th_{name}", disabled=not editable)
+        calf = st.number_input(f"小腿围 (cm) - {name}", value=safe_float(log.get('calf')), key=f"ca_{name}", disabled=not editable)
 
-        # 所有维度纵向平铺，适配手机
-        chest = st.number_input("胸围 (cm)", value=safe_float(log.get("chest")), key=f"ch_{name}", disabled=not editable)
-        arm = st.number_input("臂围 (cm)", value=safe_float(log.get("arm")), key=f"ar_{name}", disabled=not editable)
-        waist = st.number_input("腰围 (cm)", value=safe_float(log.get("waist")), key=f"wa_{name}", disabled=not editable)
-        hip = st.number_input("臀围 (cm)", value=safe_float(log.get("hip")), key=f"hi_{name}", disabled=not editable)
-        thigh = st.number_input("大腿围 (cm)", value=safe_float(log.get("thigh")), key=f"th_{name}", disabled=not editable)
-        calf = st.number_input("小腿围 (cm)", value=safe_float(log.get("calf")), key=f"ca_{name}", disabled=not editable)
-
-        if st.button("💾 保存身体数据", key=f"sv_{name}", disabled=not editable, use_container_width=True):
+        if st.button(f"保存身体数据 ({name})", key=f"btn_s_{name}", disabled=not editable):
             try:
                 data = {
-                    "user_name": name, "log_date": str(view_date),
+                    "user_name": name, "log_date": str(date.today()),
                     "weight": weight, "chest": chest, "arm": arm, "waist": waist,
                     "hip": hip, "thigh": thigh, "calf": calf
                 }
                 supabase.table("daily_logs").upsert(data, on_conflict="user_name,log_date").execute()
-                st.success("数据同步成功！")
+                st.success("数据已同步！")
                 st.rerun()
-            except Exception as e: st.error(f"保存失败: {e}")
-
-        # 趋势功能
-        metric_opt = st.selectbox("查看趋势项", ["weight", "waist", "thigh", "chest", "arm", "hip", "calf"], key=f"opt_{name}")
-        if st.button("生成趋势图 📈", key=f"tr_{name}", use_container_width=True):
-            hist = supabase.table("daily_logs").select("*").eq("user_name", name).order("log_date").execute()
-            df = pd.DataFrame(hist.data)
-            if not df.empty and metric_opt in df.columns:
-                df['log_date'] = pd.to_datetime(df['log_date'])
-                st.line_chart(df.set_index('log_date')[metric_opt])
+            except Exception as e: st.error(f"失败: {e}")
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # (2) 饮食打卡 (AI 分析)
+    # (2) 饮食打卡
     with st.container():
-        st.markdown('<div class="card"><b>🍱 饮食打卡 (AI 识别)</b>', unsafe_allow_html=True)
-        consumed = safe_float(log.get('calorie_intake'))
-        st.metric("今日摄入", f"{int(consumed)} kcal")
+        st.markdown('<div class="mobile-card">', unsafe_allow_html=True)
+        st.markdown("### 🍱 饮食打卡")
+        consumed = safe_float(log.get('calorie_intake', 0))
+        st.metric("今日已摄入", f"{int(consumed)} kcal")
         
-        food_img = st.file_uploader(f"上传 {name} 的餐食图片", type=['jpg','png'], key=f"fd_{name}", disabled=not editable)
-        if food_img:
-            st.image(food_img, use_container_width=True) # 适配手机宽度
-        
-        if st.button("🚀 启动 AI 饮食分析", key=f"ai_{name}", disabled=not editable, use_container_width=True):
-            if not food_img: st.warning("请先上传图片")
-            else:
-                # 模拟 AI 分析逻辑
-                add_cal = float(random.randint(300, 700))
-                try:
-                    supabase.table("daily_logs").upsert({
-                        "user_name": name, "log_date": str(view_date), "calorie_intake": consumed + add_cal
-                    }, on_conflict="user_name,log_date").execute()
-                    st.rerun()
-                except: st.error("写入失败")
+        f_img = st.file_uploader(f"上传餐食图片 ({name})", type=['jpg','png'], key=f"img_{name}", disabled=not editable)
+        if f_img:
+            st.image(f_img, use_container_width=True)
+            if st.button(f"🚀 AI 识别热量 ({name})", key=f"ai_{name}", disabled=not editable):
+                add_cal = random.randint(350, 650)
+                supabase.table("daily_logs").upsert({
+                    "user_name": name, "log_date": str(date.today()), "calorie_intake": consumed + add_cal
+                }, on_conflict="user_name,log_date").execute()
+                st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
     # (3) 运动消耗
     with st.container():
-        st.markdown('<div class="card"><b>🏋️ 运动消耗计算</b>', unsafe_allow_html=True)
-        burn = safe_float(log.get('calorie_burn'))
-        st.metric("已消耗热量", f"{int(burn)} kcal")
+        st.markdown('<div class="mobile-card">', unsafe_allow_html=True)
+        st.markdown("### 🏃 运动消耗")
+        ex_burn = safe_float(log.get('calorie_burn', 0))
+        st.metric("今日已消耗", f"{int(ex_burn)} kcal")
         
-        ex_dur = st.number_input(f"{name}-运动时长 (分钟)", value=int(safe_float(log.get('ex_duration'))), key=f"exd_{name}", disabled=not editable)
-        # 计算逻辑：BMR * 1.2 是基准，运动额外加
-        bmr = 10 * weight + 6.25 * h - 5 * age - 161
-        
-        if st.button("⚡ 计算并同步运动消耗", key=f"exb_{name}", disabled=not editable, use_container_width=True):
-            burnt_val = ex_dur * random.uniform(6.0, 10.0)
-            try:
-                supabase.table("daily_logs").upsert({
-                    "user_name": name, "log_date": str(view_date), "calorie_burn": burnt_val, "ex_duration": ex_dur
-                }, on_conflict="user_name,log_date").execute()
-                st.rerun()
-            except: st.error("同步失败")
+        ex_dur = st.number_input(f"运动时长 (分钟) - {name}", value=int(safe_float(log.get('ex_duration'))), key=f"dur_{name}", disabled=not editable)
+        if st.button(f"⚡ 计算运动消耗 ({name})", key=f"exb_{name}", disabled=not editable):
+            burn_val = ex_dur * random.uniform(6.0, 9.0)
+            supabase.table("daily_logs").upsert({
+                "user_name": name, "log_date": str(date.today()), "calorie_burn": burn_val, "ex_duration": ex_dur
+            }, on_conflict="user_name,log_date").execute()
+            st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # (4) 健康心得 (文字版)
+    # (4) 趋势查看
     with st.container():
-        st.markdown('<div class="card"><b>💭 健康心得</b>', unsafe_allow_html=True)
-        note_val = st.text_area("记录今天的心情或小进步...", value=str(log.get('note', '')), key=f"nt_{name}", disabled=not editable, height=100)
-        if st.button("💾 发布心得", key=f"nt_btn_{name}", disabled=not editable, use_container_width=True):
-            try:
-                supabase.table("daily_logs").upsert({
-                    "user_name": name, "log_date": str(view_date), "note": str(note_val)
-                }, on_conflict="user_name,log_date").execute()
-                st.success("心得已同步至数据库！")
-            except: st.error("保存失败")
+        st.markdown('<div class="mobile-card">', unsafe_allow_html=True)
+        st.markdown("### 📈 趋势分析")
+        metric_opt = st.selectbox(f"选择指标 ({name})", ["weight", "waist", "thigh", "arm", "hip"], key=f"opt_{name}")
+        if st.button(f"生成趋势图 ({name})", key=f"tr_{name}"):
+            hist = supabase.table("daily_logs").select("*").eq("user_name", name).order("log_date").execute()
+            df = pd.DataFrame(hist.data)
+            if not df.empty:
+                df['log_date'] = pd.to_datetime(df['log_date'])
+                st.line_chart(df.set_index('log_date')[metric_opt])
         st.markdown('</div>', unsafe_allow_html=True)
 
-# --- 7. 渲染主流程 ---
-try:
-    me_data = supabase.table("users").select("*").eq("name", my_name).execute().data[0]
-    friend_res = supabase.table("users").select("*").eq("name", other_name).execute()
-    friend_data = friend_res.data[0] if friend_res.data else None
-except:
-    st.info("请先初始化资料...")
-    st.stop()
+    # (5) 健康心得
+    with st.container():
+        st.markdown('<div class="mobile-card">', unsafe_allow_html=True)
+        st.markdown("### 💭 健康心得")
+        note_val = st.text_area(f"今日感想 ({name})", value=str(log.get('note', '')), key=f"nt_{name}", disabled=not editable)
+        if st.button(f"发布心得 ({name})", key=f"btn_n_{name}", disabled=not editable):
+            supabase.table("daily_logs").upsert({
+                "user_name": name, "log_date": str(date.today()), "note": note_val
+            }, on_conflict="user_name,log_date").execute()
+            st.success("心得已同步！")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-# 手机适配：核心逻辑改为纵向堆叠
-# 首先渲染当前用户（可编辑）
-render_user_section(my_name, editable=True, base_info=me_data)
-
-# 分隔线
+# --- 7. 页面渲染 (纵向堆叠) ---
+# 先显示自己的，再显示对方的
+render_user_section(my_name, editable=True)
 st.markdown("---")
+render_user_section(other_name, editable=False)
 
-# 然后渲染队友（只读）
-render_user_section(other_name, editable=False, base_info=friend_data)
-
-# 侧边栏/底部退出
-if st.button("切换账号 / 退出登录", use_container_width=True):
-    st.session_state.clear()
-    st.rerun()
+# 侧边栏
+with st.sidebar:
+    st.image(icon_path, width=100) if os.path.exists(icon_path) else None
+    if st.button("退出登录 / 切换身份"):
+        st.session_state.clear()
+        st.rerun()
