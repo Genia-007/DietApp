@@ -57,7 +57,7 @@ st.markdown("""
 
 # --- 3. Supabase 初始化 ---
 SUPABASE_URL = "https://hjrvdusefkjtmucsreeq.supabase.co"
-SUPABASE_KEY = "sb_publishable_yDO1V8a3qYz8YPSzXSHdWA_mhpQG8QF"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhqcnZkdXNlZmtqdG11Y3NyZWVxIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3Mzg0MzM2MiwiZXhwIjoyMDg5NDE5MzYyfQ.n7TPfrBJYeo9ZKIIEoOEPIRscmR2joGqHwqNw5-Yqsk"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- 4. 核心计算公式 ---
