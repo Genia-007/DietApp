@@ -30,7 +30,6 @@ def init_supabase():
 supabase = init_supabase()
 
 def safe_float(v, default=0.0):
-    """防止数据库返回 None 或代码运算出现 TypeError"""
     try:
         if v is None or str(v).strip() == "" or str(v).lower() == "none":
             return float(default)
@@ -39,10 +38,9 @@ def safe_float(v, default=0.0):
         return float(default)
 
 def safe_text(v):
-    """防止数据库返回乱码"""
     return str(v).strip() if v is not None else ""
 
-# --- 3. UI 样式注入 (修复看不清、左右对齐) ---
+# --- 3. UI 样式注入 ---
 st.markdown(f"""
     <style>
     html, body, [data-testid="stAppViewContainer"], .stMarkdown, p, span, label {{
@@ -59,13 +57,13 @@ st.markdown(f"""
         background-color: {TIFFANY_BLUE}; color: white !important;
         border-radius: 10px; width: 100%; border: none; font-weight: bold;
     }}
-    /* 强制移动端双列不折叠 */
     [data-testid="column"] {{ width: 50% !important; flex: 1 1 50% !important; min-width: 50% !important; }}
     h3 {{ color: #088F8A !important; text-align: center; }}
+    .stat-text {{ font-size: 14px; font-weight: bold; color: #088F8A; }}
     </style>
     """, unsafe_allow_html=True)
 
-# --- 4. 身份登录与初始化 ---
+# --- 4. 身份登录 ---
 if 'user_role' not in st.session_state:
     if os.path.exists(icon_path):
         st.image(icon_path, width=120)
@@ -79,96 +77,85 @@ if 'user_role' not in st.session_state:
 my_name = st.session_state.user_role
 other_name = "花大爷" if my_name == "不差儿" else "不差儿"
 
-# 数据库判定初始化
-try:
-    res_me = supabase.table("users").select("*").eq("name", my_name).execute()
-    initialized = True if res_me.data and len(res_me.data) > 0 else False
-except:
-    st.error("数据库连接异常")
-    st.stop()
+# --- 5. 顶部 Header 与 基础信息加载 ---
+if os.path.exists(icon_path):
+    st.image(icon_path, width=100)
 
-if not initialized:
-    st.markdown(f'<div class="card"><h3>🐣 初始化资料 ({my_name})</h3>', unsafe_allow_html=True)
-    with st.form("init_form"):
-        u_h = st.number_input("身高 (cm)", value=165, step=1)
-        u_w = st.number_input("体重 (kg)", value=60.0)
-        u_a = st.number_input("年龄", value=24, step=1)
-        if st.form_submit_button("🚀 完成初始化"):
-            supabase.table("users").upsert({"name": my_name, "height": int(u_h), "weight": safe_float(u_w), "age": int(u_a)}, on_conflict="name").execute()
-            st.rerun()
-    st.stop()
+view_date = st.date_input("📅 日期选择", date.today())
 
-# --- 5. 数据加载 ---
 try:
     me_base = supabase.table("users").select("*").eq("name", my_name).execute().data[0]
     friend_res = supabase.table("users").select("*").eq("name", other_name).execute()
     friend_base = friend_res.data[0] if friend_res.data else None
 except:
-    st.error("同步资料失败")
+    st.error("同步资料失败，请先完成初始化")
     st.stop()
 
-# 顶部 Header (修复 st.image 乱码逻辑)
-if os.path.exists(icon_path):
-    st.image(icon_path, width=100)
-
-view_date = st.date_input("📅 日期选择", date.today())
-st.write(f"今日打卡：{view_date} | 天气：🌦️ 晴 22°C")
-
-# --- 6. 统一渲染函数 (左右完全对称) ---
+# --- 6. 统一渲染函数 (新增：累计打卡天数 & 运动消耗) ---
 def render_column(name, col, editable, base_info):
     try:
+        # 获取今日记录
         l_res = supabase.table("daily_logs").select("*").eq("user_name", name).eq("log_date", str(view_date)).execute()
         log = l_res.data[0] if l_res.data else {}
-    except: log = {}
+        
+        # 获取累计打卡天数 (去重计算有记录的所有日期)
+        all_logs = supabase.table("daily_logs").select("log_date").eq("user_name", name).execute()
+        streak_days = len({item['log_date'] for item in all_logs.data}) if all_logs.data else 0
+    except:
+        log = {}
+        streak_days = 0
 
     with col:
         st.markdown(f"### {'👩‍𝓠' if name=='不差儿' else '👨‍🦳'} {name}")
+        
+        # 显示累计打卡天数
+        st.markdown(f'<p class="stat-text">🔥 累计打卡：{streak_days} 天</p>', unsafe_allow_html=True)
+        
         if not base_info:
             st.info(f"等待 {name} 初始化...")
             return
 
-        # 获取安全数值
         h = safe_float(base_info.get('height', 165.0))
         w_init = safe_float(base_info.get('weight', 60.0))
-        age = safe_float(base_info.get('age', 24.0))
 
-        # (1) 身体维度模块 (补全 7 个指标)
+        # (1) 身体维度模块
         st.markdown('<div class="card"><b>📊 身体维度</b>', unsafe_allow_html=True)
-        st.write(f"📏 身高: **{int(h)}** cm")
-        
         weight = st.number_input("体重 (kg)", value=safe_float(log.get("weight", w_init)), key=f"w_{name}", disabled=not editable)
-        bmi = round(weight / ((h/100)**2), 1) if h > 0 else 0
-        st.write(f"⚖️ BMI: **{bmi}**")
-
-        # 围度
+        
         g1, g2 = st.columns(2)
+        waist = g1.number_input("腰围", value=safe_float(log.get("waist")), key=f"wa_{name}", disabled=not editable)
+        thigh = g2.number_input("大腿围", value=safe_float(log.get("thigh")), key=f"th_{name}", disabled=not editable)
         chest = g1.number_input("胸围", value=safe_float(log.get("chest")), key=f"ch_{name}", disabled=not editable)
-        arm = g1.number_input("臂围", value=safe_float(log.get("arm")), key=f"ar_{name}", disabled=not editable)
-        waist = g2.number_input("腰围", value=safe_float(log.get("waist")), key=f"wa_{name}", disabled=not editable)
-        hip = g2.number_input("臀围", value=safe_float(log.get("hip")), key=f"hi_{name}", disabled=not editable)
-        thigh = g1.number_input("大腿围", value=safe_float(log.get("thigh")), key=f"th_{name}", disabled=not editable)
+        arm = g2.number_input("臂围", value=safe_float(log.get("arm")), key=f"ar_{name}", disabled=not editable)
+        hip = g1.number_input("臀围", value=safe_float(log.get("hip")), key=f"hi_{name}", disabled=not editable)
         calf = g2.number_input("小腿围", value=safe_float(log.get("calf")), key=f"ca_{name}", disabled=not editable)
 
         if st.button("💾 保存身体数据", key=f"sv_btn_{name}", disabled=not editable, use_container_width=True):
-            try:
-                data = {
-                    "user_name": name, "log_date": str(view_date),
-                    "weight": safe_float(weight), "chest": safe_float(chest), "arm": safe_float(arm),
-                    "waist": safe_float(waist), "hip": safe_float(hip), "thigh": safe_float(thigh), "calf": safe_float(calf)
-                }
-                supabase.table("daily_logs").upsert(data, on_conflict="user_name,log_date").execute()
-                st.rerun()
-            except Exception as e: st.error(f"保存报错: {e}")
+            data = {
+                "user_name": name, "log_date": str(view_date),
+                "weight": weight, "chest": chest, "arm": arm, "waist": waist,
+                "hip": hip, "thigh": thigh, "calf": calf
+            }
+            supabase.table("daily_logs").upsert(data, on_conflict="user_name,log_date").execute()
+            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
-        # (2) 趋势功能 (支持选择指标)
-        metric_opt = st.selectbox("查看趋势", ["weight", "waist", "thigh", "arm"], key=f"opt_{name}")
-        if st.button("加载趋势图 📈", key=f"tr_btn_{name}", use_container_width=True):
-            hist = supabase.table("daily_logs").select("*").eq("user_name", name).order("log_date").execute()
-            df = pd.DataFrame(hist.data)
-            if not df.empty and metric_opt in df.columns:
-                df['log_date'] = pd.to_datetime(df['log_date'])
-                df = df.set_index('log_date')
-                st.line_chart(df[metric_opt])
+        # (2) 运动消耗模块 (新增功能)
+        st.markdown('<div class="card"><b>🏃 运动消耗</b>', unsafe_allow_html=True)
+        ex_burn = safe_float(log.get('calorie_burn', 0.0))
+        st.metric("今日消耗", f"{int(ex_burn)} kcal", delta=f"{streak_days}天坚持" if streak_days > 0 else None)
+        
+        ex_type = st.text_input("运动项目", value=safe_text(log.get('ex_type')), key=f"ext_{name}", disabled=not editable, placeholder="如：慢跑、瑜伽")
+        ex_dur = st.number_input("时长 (分钟)", value=int(safe_float(log.get('ex_duration'))), key=f"exd_{name}", disabled=not editable)
+        
+        if st.button("⚡ 更新运动消耗", key=f"ex_btn_{name}", disabled=not editable, use_container_width=True):
+            # 简单估算逻辑：分钟 * 随机强度系数 (6-10)
+            calculated_burn = ex_dur * random.uniform(6.0, 9.0)
+            supabase.table("daily_logs").upsert({
+                "user_name": name, "log_date": str(view_date),
+                "ex_type": ex_type, "ex_duration": ex_dur, "calorie_burn": calculated_burn
+            }, on_conflict="user_name,log_date").execute()
+            st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
         # (3) 饮食打卡
@@ -183,7 +170,7 @@ def render_column(name, col, editable, base_info):
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # (4) 健康心得 (左右对齐)
+        # (4) 健康心得
         st.markdown('<div class="card"><b>💭 健康心得</b>', unsafe_allow_html=True)
         note_val = st.text_area("记录今日心情...", value=safe_text(log.get('note')), key=f"nt_{name}", disabled=not editable, height=100)
         if st.button("💾 发布心得", key=f"nt_btn_{name}", disabled=not editable, use_container_width=True):
