@@ -40,26 +40,35 @@ def safe_float(v, default=0.0):
 def safe_text(v):
     return str(v).strip() if v is not None else ""
 
-# --- 3. UI 样式注入 ---
+# --- 3.页面 UI 样式注入 ---
 st.markdown(f"""
     <style>
-    html, body, [data-testid="stAppViewContainer"], .stMarkdown, p, span, label {{
-        font-family: sans-serif !important;
-        color: #1A1A1A !important;
+    /* 1. 强制所有屏幕下的 columns 都不折叠 */
+    [data-testid="column"] {{
+        width: 50% !important;
+        flex: 1 1 50% !important;
+        min-width: 50% !important;
     }}
-    .stApp {{ background-color: #F0F9F9; }}
+
+    /* 2. 缩小手机端的间距和内边距，防止内容溢出 */
+    [data-testid="stHorizontalBlock"] {{
+        gap: 0.5rem !important;
+    }}
+    
     .card {{
-        background-color: white; padding: 20px; border-radius: 15px;
-        border-top: 5px solid {TIFFANY_BLUE}; box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-        margin-bottom: 20px;
+        padding: 10px !important; /* 手机端卡片内边距调小 */
+        margin-bottom: 10px !important;
     }}
-    .stButton>button {{
-        background-color: {TIFFANY_BLUE}; color: white !important;
-        border-radius: 10px; width: 100%; border: none; font-weight: bold;
+    
+    /* 3. 针对手机端的字体微调 (可选) */
+    @media (max-width: 640px) {{
+        .stat-text, p, span, label {{
+            font-size: 12px !important;
+        }}
+        h3 {{
+            font-size: 14px !important;
+        }}
     }}
-    [data-testid="column"] {{ width: 50% !important; flex: 1 1 50% !important; min-width: 50% !important; }}
-    h3 {{ color: #088F8A !important; text-align: center; }}
-    .stat-text {{ font-size: 14px; font-weight: bold; color: #088F8A; }}
     </style>
     """, unsafe_allow_html=True)
 
